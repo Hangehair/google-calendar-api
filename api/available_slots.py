@@ -28,12 +28,19 @@ class handler(BaseHTTPRequestHandler):
             
             if not date_str:
                 self._set_headers(400)
-                self.wfile.write(json.dumps({'error': '缺少 date 參數'}).encode())
+                self.wfile.write(json.dumps({'error': 'Missing date'}).encode())
                 return
             
             credentials_json = os.getenv('GOOGLE_APPLICATION_CREDENTIALS_JSON')
             if not credentials_json:
-                raise Exception('缺少 Google 憑證')
+                self._set_headers(500)
+                self.wfile.write(json.dumps({'error': 'Missing credentials'}).encode())
+                return
+            
+            if not CALENDAR_ID:
+                self._set_headers(500)
+                self.wfile.write(json.dumps({'error': 'Missing CALENDAR_ID'}).encode())
+                return
             
             credentials_info = json.loads(credentials_json)
             credentials = service_account.Credentials.from_service_account_info(
@@ -55,29 +62,34 @@ class handler(BaseHTTPRequestHandler):
             ).execute()
             
             events = events_result.get('items', [])
-            
-            # 🆕 定義時段（整點：13:00-18:00）
             all_slots = ['13:00', '14:00', '15:00', '16:00', '17:00', '18:00']
-            
-            # 🆕 找出被佔用的時段（考慮 2 小時預約）
             busy_slots = set()
+            
             for event in events:
                 start = event['start'].get('dateTime', event['start'].get('date'))
                 end = event['end'].get('dateTime', event['end'].get('date'))
                 
-                if 'T' in start:
-                    start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
-                    end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
+                if 'T' not in start:
+                    continue
+                
+                start_parts = start.split('T')
+                end_parts = end.split('T')
+                start_clean = start_parts[0] + 'T' + start_parts[1].split('+')[0].split('-')[0].split('Z')[0]
+                end_clean = end_parts[0] + 'T' + end_parts[1].split('+')[0].split('-')[0].split('Z')[0]
+                
+                try:
+                    start_dt = datetime.fromisoformat(start_clean)
+                    end_dt = datetime.fromisoformat(end_clean)
+                except:
+                    continue
+                
+                for slot in all_slots:
+                    slot_hour = int(slot.split(':')[0])
+                    slot_start = date_obj.replace(hour=slot_hour, minute=0, second=0)
+                    slot_end = slot_start + timedelta(hours=2)
                     
-                    # 檢查每個時段是否與事件衝突
-                    for slot in all_slots:
-                        slot_hour = int(slot.split(':')[0])
-                        slot_start = date_obj.replace(hour=slot_hour, minute=0, second=0)
-                        slot_end = slot_start + timedelta(hours=2)  # 🆕 每個預約佔 2 小時
-                        
-                        # 如果時段與事件有任何重疊，標記為忙碌
-                        if not (slot_end <= start_dt or slot_start >= end_dt):
-                            busy_slots.add(slot)
+                    if not (slot_end <= start_dt or slot_start >= end_dt):
+                        busy_slots.add(slot)
             
             available_slots = [slot for slot in all_slots if slot not in busy_slots]
             
@@ -94,5 +106,6 @@ class handler(BaseHTTPRequestHandler):
             self._set_headers(500)
             self.wfile.write(json.dumps({
                 'success': False,
-                'error': str(e)
+                'error': str(e),
+                'error_type': type(e).__name__
             }).encode())
