@@ -6,7 +6,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
-CALENDAR_ID = os.getenv('winter81943@yahoo.com.tw')
+CALENDAR_ID = os.getenv('CALENDAR_ID')
 
 class handler(BaseHTTPRequestHandler):
     def _set_headers(self, status=200):
