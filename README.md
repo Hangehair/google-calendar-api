@@ -2,6 +2,26 @@
 
 這是專為 **Hange 髮廊**設計的 Google Calendar API 預約管理工具，支援手機操作設定！
 
+## 🚀 快速部署到 Vercel
+
+點擊下方按鈕，3分鐘內部署你的 API！
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FHangehair%2Fgoogle-calendar-api&env=CALENDAR_ID,TIMEZONE,GOOGLE_CREDENTIALS_JSON&envDescription=需要設定你的%20Google%20Calendar%20ID%20和%20憑證%20JSON&envLink=https%3A%2F%2Fgithub.com%2FHangehair%2Fgoogle-calendar-api%2Fblob%2F%25E4%25B8%25BB%25E8%25A6%2581%25E7%259A%2584%2FVERCEL_DEPLOY.md&project-name=hange-calendar-api&repository-name=hange-calendar-api)
+
+### 部署步驟：
+
+1. **點擊上方按鈕** → 用 GitHub 帳號登入 Vercel
+2. **設定環境變數**：
+   - `CALENDAR_ID`: 你的 Gmail 帳號 (e.g., `your-email@gmail.com`)
+   - `TIMEZONE`: `Asia/Taipei`
+   - `GOOGLE_CREDENTIALS_JSON`: 你的 Google OAuth 憑證 JSON（一行格式）
+3. **點擊 Deploy** → 等待1-2分鐘
+4. **完成！** 你的 API 就上線了：`https://your-project.vercel.app/api/health`
+
+📚 **詳細部署教學**：請參考 [VERCEL_DEPLOY.md](./VERCEL_DEPLOY.md)
+
+---
+
 ## ✨ 功能特色
 
 - ✅ 建立髮廊預約事件（接髮、縮毛矯正、染髮）
@@ -10,6 +30,74 @@
 - ✅ 2個月接髮調整回訪提醒
 - ✅ 生日問候自動排程
 - ✅ **手機也能輕鬆設定**
+- ✅ **支援 Vercel 雲端部署**
+
+---
+
+## 📡 API 端點
+
+部署到 Vercel 後，你可以使用以下 API：
+
+### 1. 健康檢查
+```bash
+GET https://your-project.vercel.app/api/health
+```
+
+**回應範例**：
+```json
+{
+  "status": "healthy",
+  "calendar_connected": true,
+  "timestamp": "2026-01-30T10:40:00+08:00"
+}
+```
+
+### 2. 建立預約
+```bash
+POST https://your-project.vercel.app/api/booking
+Content-Type: application/json
+
+{
+  "name": "王小姐",
+  "phone": "0912-345-678",
+  "date": "2026-02-15",
+  "time": "14:00",
+  "services": ["接髮", "護髮"]
+}
+```
+
+**回應範例**：
+```json
+{
+  "success": true,
+  "message": "預約建立成功！王小姐 的 接髮, 護髮 預約已安排在 2026-02-15 14:00",
+  "event_id": "abc123xyz",
+  "calendar_link": "https://calendar.google.com/..."
+}
+```
+
+### 3. 檢查可用性
+```bash
+POST https://your-project.vercel.app/api/check-availability
+Content-Type: application/json
+
+{
+  "date": "2026-02-15"
+}
+```
+
+**回應範例**：
+```json
+{
+  "success": true,
+  "date": "2026-02-15",
+  "booked_slots": [
+    {"time": "2026-02-15T10:00:00+08:00", "summary": "接髮 - 李先生"},
+    {"time": "2026-02-15T14:00:00+08:00", "summary": "染髮 - 陳小姐"}
+  ],
+  "available": true
+}
+```
 
 ---
 
@@ -86,7 +174,7 @@
 
 ---
 
-## 💻 安裝與使用
+## 💻 本地安裝與使用
 
 ### 1. 克隆專案
 
@@ -177,7 +265,7 @@ calendar.create_event(
     summary='【回訪提醒】王小姐 - 接髮調整',
     start_time=adjustment_date,
     end_time=adjustment_date + datetime.timedelta(hours=2),
-    description='接髮調整課程買4送1優惠\n單次 $5,000\n提醒客戶預約調整'
+    description='接髮調整課程買4送1\n單次 $5,000\n提醒客戶預約調整'
 )
 ```
 
@@ -273,6 +361,10 @@ LINE 回傳預約確認
 ### Q5: 如何在多台電腦使用？
 
 **A:** 複製 `credentials.json` 和 `token.json` 到新電腦即可。
+
+### Q6: Vercel 部署失敗怎麼辦？
+
+**A:** 檢查環境變數是否正確設定，特別是 `GOOGLE_CREDENTIALS_JSON` 必須是完整的一行 JSON。詳見 [VERCEL_DEPLOY.md](./VERCEL_DEPLOY.md)。
 
 ---
 
