@@ -1,14 +1,22 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import os
 import json
 from datetime import datetime, timedelta
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
+from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 import pytz
 
 app = Flask(__name__)
+
+# ✅ 啟用 CORS 支援，允許所有來源（產品環境建議限制特定域名）
+CORS(app, resources={
+    r"/api/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
 
 # Google Calendar API 設定
 SCOPES = ['https://www.googleapis.com/auth/calendar']
@@ -16,29 +24,29 @@ CALENDAR_ID = os.getenv('CALENDAR_ID', 'primary')
 TIMEZONE = os.getenv('TIMEZONE', 'Asia/Taipei')
 
 def get_calendar_service():
-    """建立 Google Calendar 服務"""
-    creds = None
-    
-    # 從環境變數讀取憑證
+    """建立 Google Calendar 服務（使用 Service Account）"""
     credentials_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
     if not credentials_json:
         return None, "Missing GOOGLE_CREDENTIALS_JSON environment variable"
     
     try:
         credentials_info = json.loads(credentials_json)
-        creds = Credentials.from_authorized_user_info(credentials_info, SCOPES)
-    except Exception as e:
-        return None, f"Error loading credentials: {str(e)}"
-    
-    try:
+        creds = Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
         service = build('calendar', 'v3', credentials=creds)
         return service, None
     except Exception as e:
-        return None, f"Error building calendar service: {str(e)}"
+        return None, f"Error: {str(e)}"
 
-@app.route('/api/health', methods=['GET'])
+@app.route('/api/health', methods=['GET', 'OPTIONS'])
 def health_check():
     """健康檢查端點"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        return response
+    
     service, error = get_calendar_service()
     
     if error:
@@ -48,21 +56,33 @@ def health_check():
             'timestamp': datetime.now(pytz.timezone(TIMEZONE)).isoformat()
         }), 500
     
-    return jsonify({
+    response = jsonify({
         'status': 'healthy',
         'calendar_connected': True,
         'calendar_id': CALENDAR_ID,
         'timezone': TIMEZONE,
         'timestamp': datetime.now(pytz.timezone(TIMEZONE)).isoformat()
     })
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    return response
 
-@app.route('/api/booking', methods=['POST'])
+@app.route('/api/booking', methods=['POST', 'OPTIONS'])
 def create_booking():
     """建立預約"""
+    # 處理 OPTIONS 預檢請求
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        return response
+    
     service, error = get_calendar_service()
     
     if error:
-        return jsonify({'success': False, 'error': error}), 500
+        response = jsonify({'success': False, 'error': error})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
     
     try:
         data = request.get_json()
@@ -71,21 +91,30 @@ def create_booking():
         required_fields = ['name', 'phone', 'date', 'time', 'services']
         for field in required_fields:
             if field not in data:
-                return jsonify({
+                response = jsonify({
                     'success': False,
                     'error': f'Missing required field: {field}'
-                }), 400
+                })
+                response.headers.add('Access-Control-Allow-Origin', '*')
+                return response, 400
         
         # 解析日期時間
         tz = pytz.timezone(TIMEZONE)
         date_str = f"{data['date']} {data['time']}"
         start_time = tz.localize(datetime.strptime(date_str, '%Y-%m-%d %H:%M'))
-        end_time = start_time + timedelta(hours=2)  # 預設2小時
+        end_time = start_time + timedelta(hours=2)
+        
+        # 處理 services （可能是 list 或 string）
+        services = data['services']
+        if isinstance(services, list):
+            services_str = ', '.join(services)
+        else:
+            services_str = services
         
         # 建立事件
         event = {
-            'summary': f"{', '.join(data['services'])} - {data['name']}",
-            'description': f"客戶：{data['name']}\n電話：{data['phone']}\n服務：{', '.join(data['services'])}",
+            'summary': f"{services_str} - {data['name']}",
+            'description': f"客戶：{data['name']}\n電話：{data['phone']}\n服務：{services_str}",
             'start': {
                 'dateTime': start_time.isoformat(),
                 'timeZone': TIMEZONE,
@@ -97,8 +126,8 @@ def create_booking():
             'reminders': {
                 'useDefault': False,
                 'overrides': [
-                    {'method': 'popup', 'minutes': 24 * 60},  # 前一天
-                    {'method': 'popup', 'minutes': 60},  # 1小時前
+                    {'method': 'popup', 'minutes': 24 * 60},
+                    {'method': 'popup', 'minutes': 60},
                 ],
             },
         }
@@ -109,35 +138,50 @@ def create_booking():
             body=event
         ).execute()
         
-        return jsonify({
+        response = jsonify({
             'success': True,
-            'message': f"預約建立成功！{data['name']} 的 {', '.join(data['services'])} 預約已安排在 {data['date']} {data['time']}",
+            'message': f"預約建立成功！{data['name']} 的 {services_str} 預約已安排在 {data['date']} {data['time']}",
             'event_id': created_event['id'],
             'calendar_link': created_event.get('htmlLink', '')
         })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
         
     except Exception as e:
-        return jsonify({
+        response = jsonify({
             'success': False,
             'error': str(e)
-        }), 500
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
 
-@app.route('/api/check-availability', methods=['POST'])
+@app.route('/api/check-availability', methods=['POST', 'OPTIONS'])
 def check_availability():
     """檢查時段可用性"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        return response
+    
     service, error = get_calendar_service()
     
     if error:
-        return jsonify({'success': False, 'error': error}), 500
+        response = jsonify({'success': False, 'error': error})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
     
     try:
         data = request.get_json()
         
         if 'date' not in data:
-            return jsonify({
+            response = jsonify({
                 'success': False,
                 'error': 'Missing required field: date'
-            }), 400
+            })
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 400
         
         # 解析日期
         tz = pytz.timezone(TIMEZONE)
@@ -165,18 +209,22 @@ def check_availability():
                 'summary': event.get('summary', '未命名')
             })
         
-        return jsonify({
+        response = jsonify({
             'success': True,
             'date': data['date'],
             'booked_slots': booked_slots,
-            'available': len(booked_slots) < 6  # 假設一天最多6個時段
+            'available': len(booked_slots) < 6
         })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
         
     except Exception as e:
-        return jsonify({
+        response = jsonify({
             'success': False,
             'error': str(e)
-        }), 500
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
 
 # Vercel 需要這個
 app = app
