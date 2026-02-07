@@ -37,6 +37,99 @@ def get_calendar_service():
     except Exception as e:
         return None, f"Error: {str(e)}"
 
+def create_booking_events(service, name, phone, date, time, services):
+    """建立兩個 Google Calendar 事件：首次預約 + 兩個月後回訪提醒"""
+    
+    # 解析預約時間
+    tz = pytz.timezone(TIMEZONE)
+    date_str = f"{date} {time}"
+    booking_start = tz.localize(datetime.strptime(date_str, '%Y-%m-%d %H:%M'))
+    booking_end = booking_start + timedelta(hours=2)
+    
+    # 計算兩個月後的提醒日期
+    reminder_date = booking_start + timedelta(days=60)  # 約兩個月
+    reminder_start = reminder_date.replace(hour=14, minute=0, second=0)
+    reminder_end = reminder_start + timedelta(hours=2)
+    
+    # 處理 services
+    if isinstance(services, list):
+        services_str = '、'.join(services)
+    else:
+        services_str = services
+    
+    # === 事件 1：首次預約 ===
+    event_booking = {
+        'summary': f'【接髮服務】{name} - {services_str}',
+        'description': f'👤 客戶：{name}\n📱 電話：{phone}\n💇 服務項目：{services_str}',
+        'start': {
+            'dateTime': booking_start.isoformat(),
+            'timeZone': TIMEZONE,
+        },
+        'end': {
+            'dateTime': booking_end.isoformat(),
+            'timeZone': TIMEZONE,
+        },
+        'colorId': '9',  # 藍色
+        'reminders': {
+            'useDefault': False,
+            'overrides': [
+                {'method': 'popup', 'minutes': 1440},  # 1天前
+                {'method': 'popup', 'minutes': 60},     # 1小時前
+            ],
+        },
+    }
+    
+    # === 事件 2：兩個月後回訪提醒 ===
+    event_reminder = {
+        'summary': f'🔔【回訪提醒】{name} - 接髮調整',
+        'description': f'''🔔 接髮調整回訪提醒
+
+👤 客戶：{name}
+📱 電話：{phone}
+📅 上次服務：{date}
+
+💎 優惠方案：
+- 接髮調整課程買4送1
+- 單次 $5,000
+
+💡 建議聯絡時間：提前3天主動聯繫客戶''',
+        'start': {
+            'dateTime': reminder_start.isoformat(),
+            'timeZone': TIMEZONE,
+        },
+        'end': {
+            'dateTime': reminder_end.isoformat(),
+            'timeZone': TIMEZONE,
+        },
+        'colorId': '11',  # 紅色（醒目）
+        'reminders': {
+            'useDefault': False,
+            'overrides': [
+                {'method': 'popup', 'minutes': 4320},  # 3天前
+                {'method': 'popup', 'minutes': 1440},  # 1天前
+            ],
+        },
+    }
+    
+    # 建立兩個事件
+    created_booking = service.events().insert(
+        calendarId=CALENDAR_ID,
+        body=event_booking
+    ).execute()
+    
+    created_reminder = service.events().insert(
+        calendarId=CALENDAR_ID,
+        body=event_reminder
+    ).execute()
+    
+    return {
+        'booking_event_id': created_booking['id'],
+        'reminder_event_id': created_reminder['id'],
+        'booking_link': created_booking.get('htmlLink', ''),
+        'reminder_link': created_reminder.get('htmlLink', ''),
+        'reminder_date': reminder_start.strftime('%Y-%m-%d')
+    }
+
 @app.route('/api/health', methods=['GET', 'OPTIONS'])
 def health_check():
     """健康檢查端點"""
@@ -68,7 +161,7 @@ def health_check():
 
 @app.route('/api/booking', methods=['POST', 'OPTIONS'])
 def create_booking():
-    """建立預約"""
+    """建立預約（同時建立首次服務 + 兩個月後回訪提醒）"""
     # 處理 OPTIONS 預檢請求
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
@@ -98,51 +191,31 @@ def create_booking():
                 response.headers.add('Access-Control-Allow-Origin', '*')
                 return response, 400
         
-        # 解析日期時間
-        tz = pytz.timezone(TIMEZONE)
-        date_str = f"{data['date']} {data['time']}"
-        start_time = tz.localize(datetime.strptime(date_str, '%Y-%m-%d %H:%M'))
-        end_time = start_time + timedelta(hours=2)
+        # 建立兩個事件
+        result = create_booking_events(
+            service,
+            data['name'],
+            data['phone'],
+            data['date'],
+            data['time'],
+            data['services']
+        )
         
-        # 處理 services （可能是 list 或 string）
+        # 處理 services 顯示
         services = data['services']
         if isinstance(services, list):
-            services_str = ', '.join(services)
+            services_str = '、'.join(services)
         else:
             services_str = services
-        
-        # 建立事件
-        event = {
-            'summary': f"{services_str} - {data['name']}",
-            'description': f"客戶：{data['name']}\n電話：{data['phone']}\n服務：{services_str}",
-            'start': {
-                'dateTime': start_time.isoformat(),
-                'timeZone': TIMEZONE,
-            },
-            'end': {
-                'dateTime': end_time.isoformat(),
-                'timeZone': TIMEZONE,
-            },
-            'reminders': {
-                'useDefault': False,
-                'overrides': [
-                    {'method': 'popup', 'minutes': 24 * 60},
-                    {'method': 'popup', 'minutes': 60},
-                ],
-            },
-        }
-        
-        # 新增到 Google Calendar
-        created_event = service.events().insert(
-            calendarId=CALENDAR_ID,
-            body=event
-        ).execute()
         
         response = jsonify({
             'success': True,
             'message': f"預約建立成功！{data['name']} 的 {services_str} 預約已安排在 {data['date']} {data['time']}",
-            'event_id': created_event['id'],
-            'calendar_link': created_event.get('htmlLink', '')
+            'booking_event_id': result['booking_event_id'],
+            'reminder_event_id': result['reminder_event_id'],
+            'reminder_date': result['reminder_date'],
+            'booking_link': result['booking_link'],
+            'reminder_link': result['reminder_link']
         })
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
